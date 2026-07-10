@@ -101,46 +101,23 @@ function buildLiveUsageWindow(limit?: AppServerRateLimitWindow | null): UsageWin
     return undefined;
   }
 
-  const resetTime = parseUnixTimestamp(limit.resetsAt);
-  return buildUsageWindow(limit.usedPercent, limit.windowDurationMins, resetTime);
+  return buildUsageWindow(limit.usedPercent, parseUnixTimestamp(limit.resetsAt));
 }
 
 function buildSessionUsageWindow(recordTimestamp: Date, limit: UsageLimitPayload): UsageWindow {
-  const resetTime = calculateSessionResetTime(recordTimestamp, limit);
-  return buildUsageWindow(limit.used_percent ?? 0, limit.window_minutes, resetTime);
+  return buildUsageWindow(limit.used_percent ?? 0, calculateSessionResetTime(recordTimestamp, limit));
 }
 
-function buildUsageWindow(
-  usedPercent: number,
-  windowMinutes: number | null | undefined,
-  resetTime: Date | undefined
-): UsageWindow {
+function buildUsageWindow(usedPercent: number, resetTime: Date | undefined): UsageWindow {
   const now = new Date();
   const isExpired = resetTime !== undefined && resetTime.getTime() <= now.getTime();
   const remainingPercent = isExpired ? 100 : clampPercentage(100 - usedPercent);
 
   return {
     remainingPercent,
-    elapsedPercent: isExpired ? undefined : calculateElapsedPercent(now, resetTime, windowMinutes),
     resetTime,
     isExpired
   };
-}
-
-function calculateElapsedPercent(
-  now: Date,
-  resetTime: Date | undefined,
-  windowMinutes?: number | null
-): number | undefined {
-  if (!resetTime || !windowMinutes || windowMinutes <= 0) {
-    return undefined;
-  }
-
-  const windowMilliseconds = windowMinutes * 60 * 1000;
-  const remainingMilliseconds = Math.max(0, resetTime.getTime() - now.getTime());
-  const elapsedMilliseconds = Math.max(0, Math.min(windowMilliseconds, windowMilliseconds - remainingMilliseconds));
-
-  return clampPercentage((elapsedMilliseconds / windowMilliseconds) * 100);
 }
 
 function calculateSessionResetTime(recordTimestamp: Date, limit: UsageLimitPayload): Date | undefined {

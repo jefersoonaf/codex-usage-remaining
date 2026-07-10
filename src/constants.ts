@@ -23,6 +23,5 @@ export const PROGRESS_COLORS = {
   safe: '#4CAF50',
   warning: '#F3D898',
   critical: '#ECA7A7',
-  time: '#9C27B0',
   empty: '#555555'
 } as const;

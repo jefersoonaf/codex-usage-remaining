@@ -1,0 +1,17 @@
+src/**
+tsconfig.json
+.gitignore
+.github/**
+.vscode/**
+node_modules/**
+
+*.map
+*.vsix
+npm-debug.log*
+
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.log
+.git/**

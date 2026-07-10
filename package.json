@@ -1,0 +1,122 @@
+{
+  "name": "codex-usage-remaining",
+  "displayName": "Codex Usage Remaining",
+  "description": "A VS Code extension for monitoring remaining Codex usage across the 5-hour and weekly windows.",
+  "license": "MIT",
+  "version": "0.0.1",
+  "publisher": "jefersoonaf",
+  "author": {
+    "name": "Jeferson Alves Ferreira",
+    "url": "https://github.com/jefersoonaf"
+  },
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jefersoonaf/codex-usage-remaining"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other",
+    "AI"
+  ],
+  "keywords": [
+    "codex",
+    "remaining",
+    "usage",
+    "monitoring",
+    "status-bar",
+    "analytics"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codex-usage-remaining.refresh",
+        "title": "Codex Usage Remaining: Refresh Statistics",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "codex-usage-remaining.showDetails",
+        "title": "Codex Usage Remaining: Show Details",
+        "icon": "$(table)"
+      },
+      {
+        "command": "codex-usage-remaining.openSettings",
+        "title": "Codex Usage Remaining: Open Settings",
+        "icon": "$(gear)"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Usage Remaining",
+      "properties": {
+        "codexUsageRemaining.showOutputOnError": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the output panel automatically when an error is logged.",
+          "scope": "window"
+        },
+        "codexUsageRemaining.codexExecutablePath": {
+          "type": "string",
+          "default": "codex",
+          "description": "Codex CLI executable or absolute path used to query live usage through Codex app-server.",
+          "scope": "window"
+        },
+        "codexUsageRemaining.sessionPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom Codex sessions directory used for token summaries and as a fallback. Leave empty to use ~/.codex/sessions.",
+          "scope": "window"
+        },
+        "codexUsageRemaining.refreshInterval": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "maximum": 3600,
+          "description": "Refresh interval in seconds.",
+          "scope": "window"
+        },
+        "codexUsageRemaining.warningRemainingThreshold": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Show a warning indicator when remaining usage is at or below this percentage.",
+          "scope": "window"
+        },
+        "codexUsageRemaining.criticalRemainingThreshold": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Show a critical indicator when remaining usage is at or below this percentage.",
+          "scope": "window"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npm run typecheck && npm run bundle",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --sourcemap --outfile=out/extension.js --log-level=info",
+    "typecheck": "tsc -p ./ --noEmit",
+    "watch": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --sourcemap --outfile=out/extension.js --watch",
+    "package:vsix": "npm run compile && npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "18.x",
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "glob": "^10.3.10"
+  },
+  "extensionKind": [
+    "ui"
+  ]
+}

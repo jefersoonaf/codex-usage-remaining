@@ -101,24 +101,22 @@ function getStatusCircle(usage: UsageWindow, settings: ExtensionSettings): strin
 
 function createTooltip(snapshot: UsageSnapshot, settings: ExtensionSettings): vscode.MarkdownString {
   const tooltip = new vscode.MarkdownString();
-  tooltip.isTrusted = true;
+  tooltip.isTrusted = {
+    enabledCommands: [COMMANDS.showDetails, COMMANDS.openSettings]
+  };
   tooltip.supportHtml = true;
   tooltip.supportThemeIcons = true;
 
   tooltip.appendMarkdown(`## ⚡ ${EXTENSION_NAME}\n\n`);
-  tooltip.appendMarkdown(renderTooltipWindow('🚀 5-Hour Window', snapshot.fiveHour, settings));
-  tooltip.appendMarkdown(renderTooltipWindow('📅 Weekly Window', snapshot.weekly, settings));
+  tooltip.appendMarkdown(renderTooltipWindow('5-Hour', snapshot.fiveHour, settings));
+  tooltip.appendMarkdown(renderTooltipWindow('Weekly', snapshot.weekly, settings));
   tooltip.appendMarkdown('---\n\n');
-  tooltip.appendMarkdown('### Token activity\n\n');
-  tooltip.appendMarkdown(`**Total**  \n${formatTokenUsage(snapshot.totalUsage)}\n\n`);
-  tooltip.appendMarkdown(`**Latest**  \n${formatTokenUsage(snapshot.lastUsage)}\n\n`);
   tooltip.appendMarkdown(`**Source:** ${formatUsageSource(snapshot)}\n\n`);
 
   if (snapshot.sourceWarning) {
-    tooltip.appendMarkdown(`> ⚠️ ${snapshot.sourceWarning}\n\n`);
+    tooltip.appendMarkdown(`> ⚠️ ${escapeMarkdown(snapshot.sourceWarning)}\n\n`);
   }
 
-  tooltip.appendMarkdown('---\n\n');
   tooltip.appendMarkdown(`[📊 Details](command:${COMMANDS.showDetails}) · [⚙️ Settings](command:${COMMANDS.openSettings})`);
 
   return tooltip;
@@ -134,21 +132,13 @@ function renderTooltipWindow(
   }
 
   const level = getUsageLevel(usage.remainingPercent, settings);
-  const elapsedMetric = usage.elapsedPercent === undefined
-    ? '**Window elapsed** · N/A\n\n'
-    : renderTooltipMetric('Window elapsed', usage.elapsedPercent, PROGRESS_COLORS.time);
 
   return `### ${getStatusCircle(usage, settings)} ${title}\n\n` +
-    renderTooltipMetric('Remaining', usage.remainingPercent, getLevelColor(level)) +
-    elapsedMetric +
-    `**Resets:** ${formatResetTime(usage)}\n\n`;
+    `${makeTooltipBar(usage.remainingPercent, getLevelColor(level))} **${usage.remainingPercent.toFixed(1)}% remaining**\n\n` +
+    `${formatResetSummary(usage)}\n\n`;
 }
 
-function renderTooltipMetric(label: string, percentage: number, color: string): string {
-  return `**${label}** · ${percentage.toFixed(1)}%\n\n${makeTooltipBar(percentage, color)}\n\n`;
-}
-
-function makeTooltipBar(percentage: number, color: string, width = 24): string {
+function makeTooltipBar(percentage: number, color: string, width = 22): string {
   const filledCount = Math.round((clampPercentage(percentage) / 100) * width);
   const emptyCount = width - filledCount;
   const filled = filledCount > 0 ? `<span style="color:${color};">${'█'.repeat(filledCount)}</span>` : '';
@@ -176,7 +166,6 @@ function renderDetailsHtml(snapshot: UsageSnapshot, settings: ExtensionSettings)
       <div>
         <div class="eyebrow">Codex usage</div>
         <h1>Remaining usage</h1>
-        <p>Current availability for the active 5-hour and weekly windows.</p>
       </div>
       <div class="header-actions">
         <span class="source-badge ${snapshot.rateLimitSource === 'live' ? 'live' : 'fallback'}">${formatUsageSource(snapshot)}</span>
@@ -186,9 +175,9 @@ function renderDetailsHtml(snapshot: UsageSnapshot, settings: ExtensionSettings)
 
     ${warning}
 
-    <section class="usage-grid" aria-label="Usage windows">
-      ${renderWindowCard('🚀', '5-Hour Window', snapshot.fiveHour, settings)}
-      ${renderWindowCard('📅', 'Weekly Window', snapshot.weekly, settings)}
+    <section class="usage-list" aria-label="Usage windows">
+      ${renderWindowCard('🚀', '5-Hour', snapshot.fiveHour, settings)}
+      ${renderWindowCard('📅', 'Weekly', snapshot.weekly, settings)}
     </section>
 
     <section class="token-panel">
@@ -229,14 +218,11 @@ function renderWindowCard(
         <div class="card-title"><span class="card-icon">${icon}</span><h2>${title}</h2></div>
         <span class="status-chip unavailable">Unavailable</span>
       </div>
-      <div class="empty-state">No usage data is currently available for this window.</div>
+      <div class="empty-state">Usage data is unavailable for this window.</div>
     </article>`;
   }
 
   const level = getUsageLevel(usage.remainingPercent, settings);
-  const elapsedMetric = usage.elapsedPercent === undefined
-    ? renderUnavailableWebMetric('Window elapsed')
-    : renderWebMetric('Window elapsed', usage.elapsedPercent, `${usage.elapsedPercent.toFixed(1)}%`, 'time');
 
   return `<article class="usage-card">
     <div class="card-heading">
@@ -244,32 +230,18 @@ function renderWindowCard(
       <span class="status-chip ${level}">${getLevelLabel(level)}</span>
     </div>
 
-    <div class="metrics">
-      ${renderWebMetric('Remaining', usage.remainingPercent, `${usage.remainingPercent.toFixed(1)}%`, `remaining ${level}`)}
-      ${elapsedMetric}
+    <div class="metric">
+      <div class="metric-header"><span>Remaining</span><strong>${usage.remainingPercent.toFixed(1)}%</strong></div>
+      <div class="progress-track" role="progressbar" aria-label="Remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${clampPercentage(usage.remainingPercent)}">
+        <div class="progress-fill remaining ${level}" style="width: ${clampPercentage(usage.remainingPercent)}%"></div>
+      </div>
     </div>
 
     <div class="reset-row">
-      <span>Resets</span>
-      <strong>${formatResetTime(usage)}</strong>
+      <strong>${formatResetCountdown(usage)}</strong>
+      <span>${formatResetDate(usage)}</span>
     </div>
   </article>`;
-}
-
-function renderWebMetric(label: string, percentage: number, text: string, cssClass: string): string {
-  return `<div class="metric">
-    <div class="metric-header"><span>${label}</span><strong>${text}</strong></div>
-    <div class="progress-track" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${clampPercentage(percentage)}">
-      <div class="progress-fill ${cssClass}" style="width: ${clampPercentage(percentage)}%"></div>
-    </div>
-  </div>`;
-}
-
-function renderUnavailableWebMetric(label: string): string {
-  return `<div class="metric">
-    <div class="metric-header"><span>${label}</span><strong>N/A</strong></div>
-    <div class="progress-track unavailable-track" aria-label="${label} unavailable"></div>
-  </div>`;
 }
 
 function renderTokenRow(label: string, usage: TokenUsage): string {
@@ -310,57 +282,53 @@ function renderWebviewCss(): string {
       color: var(--vscode-editor-foreground);
       font-family: var(--vscode-font-family);
       font-size: var(--vscode-font-size);
-      line-height: 1.5;
+      line-height: 1.45;
     }
     .container {
-      width: min(920px, 100%);
+      width: min(720px, 100%);
       margin: 0 auto;
-      padding: 28px;
+      padding: 20px;
     }
     .page-header {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 24px;
-      margin-bottom: 22px;
+      gap: 16px;
+      margin-bottom: 14px;
     }
     .eyebrow {
       color: var(--vscode-descriptionForeground);
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       letter-spacing: .08em;
       text-transform: uppercase;
     }
     h1, h2, p { margin: 0; }
     h1 {
-      margin-top: 2px;
-      font-size: 26px;
+      margin-top: 1px;
+      font-size: 20px;
       font-weight: 650;
-      letter-spacing: -.02em;
+      letter-spacing: -.015em;
     }
     h2 {
-      font-size: 15px;
+      font-size: 13px;
       font-weight: 600;
-    }
-    .page-header p {
-      margin-top: 5px;
-      color: var(--vscode-descriptionForeground);
     }
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-shrink: 0;
     }
     .source-badge,
     .status-chip {
       display: inline-flex;
       align-items: center;
-      min-height: 26px;
-      padding: 3px 9px;
+      min-height: 23px;
+      padding: 2px 8px;
       border: 1px solid var(--vscode-panel-border);
       border-radius: 999px;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       white-space: nowrap;
     }
@@ -370,9 +338,9 @@ function renderWebviewCss(): string {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      min-height: 30px;
-      padding: 5px 11px;
+      gap: 5px;
+      min-height: 28px;
+      padding: 4px 10px;
       border: 1px solid transparent;
       border-radius: 6px;
       background: var(--vscode-button-background);
@@ -384,28 +352,27 @@ function renderWebviewCss(): string {
     button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
     .notice {
       display: flex;
-      gap: 10px;
-      margin-bottom: 18px;
-      padding: 10px 12px;
+      gap: 8px;
+      margin-bottom: 12px;
+      padding: 8px 10px;
       border: 1px solid var(--vscode-inputValidation-warningBorder);
-      border-radius: 8px;
+      border-radius: 7px;
       background: var(--vscode-inputValidation-warningBackground);
       color: var(--vscode-inputValidation-warningForeground);
+      font-size: 12px;
     }
     .notice-icon { flex-shrink: 0; }
-    .usage-grid {
+    .usage-list {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
+      gap: 10px;
     }
     .usage-card,
     .token-panel {
       border: 1px solid var(--vscode-panel-border);
-      border-radius: 10px;
+      border-radius: 8px;
       background: var(--vscode-sideBar-background);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
     }
-    .usage-card { padding: 18px; }
+    .usage-card { padding: 13px 14px; }
     .card-heading,
     .section-heading,
     .metric-header,
@@ -414,132 +381,173 @@ function renderWebviewCss(): string {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
     }
     .card-title {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       min-width: 0;
     }
-    .card-icon { font-size: 15px; }
+    .card-icon { font-size: 13px; }
     .status-chip.safe { color: ${PROGRESS_COLORS.safe}; }
     .status-chip.warning { color: var(--vscode-editorWarning-foreground); }
     .status-chip.critical { color: var(--vscode-errorForeground); }
     .status-chip.unavailable { color: var(--vscode-descriptionForeground); }
-    .metrics {
-      display: grid;
-      gap: 17px;
-      margin-top: 22px;
-    }
+    .metric { margin-top: 13px; }
     .metric-header {
-      margin-bottom: 7px;
+      margin-bottom: 5px;
       color: var(--vscode-descriptionForeground);
-      font-size: 12px;
+      font-size: 11px;
     }
     .metric-header strong {
       color: var(--vscode-editor-foreground);
-      font-size: 12px;
+      font-size: 11px;
       font-variant-numeric: tabular-nums;
     }
     .progress-track {
       width: 100%;
-      height: 9px;
+      height: 8px;
       overflow: hidden;
       border-radius: 999px;
-      background: var(--vscode-progressBar-background, rgba(128, 128, 128, .25));
+      background: rgba(128, 128, 128, .22);
     }
     .progress-fill {
       height: 100%;
       border-radius: inherit;
       transition: width .25s ease;
     }
-    .progress-fill.time { background: ${PROGRESS_COLORS.time}; }
     .progress-fill.remaining.safe { background: ${PROGRESS_COLORS.safe}; }
     .progress-fill.remaining.warning { background: ${PROGRESS_COLORS.warning}; }
     .progress-fill.remaining.critical { background: ${PROGRESS_COLORS.critical}; }
-    .unavailable-track {
-      opacity: .45;
-      background-image: repeating-linear-gradient(135deg, transparent 0 5px, var(--vscode-panel-border) 5px 7px);
-    }
     .reset-row {
-      margin-top: 20px;
-      padding-top: 13px;
-      border-top: 1px solid var(--vscode-panel-border);
+      align-items: baseline;
+      margin-top: 10px;
       color: var(--vscode-descriptionForeground);
-      font-size: 12px;
+      font-size: 11px;
     }
     .reset-row strong {
       color: var(--vscode-editor-foreground);
       font-weight: 500;
       font-variant-numeric: tabular-nums;
+    }
+    .reset-row span {
+      font-variant-numeric: tabular-nums;
       text-align: right;
     }
     .empty-state {
-      margin-top: 22px;
+      margin-top: 12px;
       color: var(--vscode-descriptionForeground);
+      font-size: 12px;
     }
     .token-panel {
-      margin-top: 16px;
-      padding: 18px;
+      margin-top: 10px;
+      padding: 13px 14px;
     }
     .token-rows {
       display: grid;
-      gap: 0;
-      margin-top: 14px;
+      margin-top: 8px;
       border-top: 1px solid var(--vscode-panel-border);
     }
     .token-row {
       align-items: flex-start;
-      padding: 11px 0;
+      padding: 8px 0;
       border-bottom: 1px solid var(--vscode-panel-border);
     }
     .token-row:last-child { border-bottom: 0; padding-bottom: 0; }
-    .token-row strong { min-width: 54px; font-size: 12px; }
+    .token-row strong { min-width: 48px; font-size: 11px; }
     .token-row span {
       color: var(--vscode-descriptionForeground);
-      font-size: 12px;
+      font-size: 11px;
       text-align: right;
     }
     .page-footer {
-      padding: 18px 0 2px;
+      padding: 12px 0 0;
       color: var(--vscode-descriptionForeground);
-      font-size: 11px;
+      font-size: 10px;
       text-align: center;
     }
     .error-state {
       max-width: 520px;
-      margin: 60px auto;
-      padding: 28px;
+      margin: 48px auto;
+      padding: 24px;
       border: 1px solid var(--vscode-errorBorder);
-      border-radius: 10px;
+      border-radius: 8px;
       background: var(--vscode-sideBar-background);
       text-align: center;
     }
-    .error-icon { margin-bottom: 8px; font-size: 24px; }
-    .error-state p { margin: 8px 0 18px; color: var(--vscode-descriptionForeground); }
-    @media (max-width: 700px) {
-      .container { padding: 18px; }
-      .page-header { flex-direction: column; }
+    .error-icon { margin-bottom: 7px; font-size: 22px; }
+    .error-state p { margin: 7px 0 16px; color: var(--vscode-descriptionForeground); }
+    @media (max-width: 560px) {
+      .container { padding: 14px; }
+      .page-header { align-items: flex-start; flex-direction: column; }
       .header-actions { width: 100%; justify-content: space-between; }
-      .usage-grid { grid-template-columns: 1fr; }
-      .token-row { flex-direction: column; gap: 4px; }
+      .reset-row { align-items: flex-start; flex-direction: column; gap: 2px; }
+      .reset-row span { text-align: left; }
+      .token-row { flex-direction: column; gap: 3px; }
       .token-row span { text-align: left; }
     }
   `;
 }
 
-function formatResetTime(usage: UsageWindow): string {
+function formatResetSummary(usage: UsageWindow): string {
   if (!usage.resetTime) {
-    return 'Unavailable';
+    return '**Reset:** unavailable';
   }
 
-  const value = usage.resetTime.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  });
+  if (usage.isExpired) {
+    return `**Reset complete** · ${formatAbsoluteDate(usage.resetTime)}`;
+  }
 
-  return usage.isExpired ? `Completed ${value}` : value;
+  return `**Resets in ${formatDurationUntil(usage.resetTime)}** · ${formatAbsoluteDate(usage.resetTime)}`;
+}
+
+function formatResetCountdown(usage: UsageWindow): string {
+  if (!usage.resetTime) {
+    return 'Reset unavailable';
+  }
+
+  if (usage.isExpired) {
+    return 'Reset complete';
+  }
+
+  return `Resets in ${formatDurationUntil(usage.resetTime)}`;
+}
+
+function formatResetDate(usage: UsageWindow): string {
+  if (!usage.resetTime) {
+    return '—';
+  }
+
+  return formatAbsoluteDate(usage.resetTime);
+}
+
+function formatDurationUntil(resetTime: Date): string {
+  const remainingMilliseconds = Math.max(0, resetTime.getTime() - Date.now());
+  const totalMinutes = Math.floor(remainingMilliseconds / 60_000);
+
+  if (totalMinutes < 1) {
+    return '<1m';
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0) {
+    return `${minutes}m`;
+  }
+
+  return `${hours}h ${minutes}m`;
+}
+
+function formatAbsoluteDate(value: Date): string {
+  return value.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function formatUsageSource(snapshot: UsageSnapshot): string {
@@ -580,4 +588,8 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function escapeMarkdown(value: string): string {
+  return value.replace(/[\\`*_{}\[\]()<>#+\-.!|]/g, '\\$&');
 }

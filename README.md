@@ -6,9 +6,10 @@ A Visual Studio Code, Cursor, and Windsurf extension that shows how much Codex u
 
 - Remaining usage percentages in the status bar.
 - Green, yellow, and red status indicators based on configurable remaining thresholds.
-- Progress bars in the status bar tooltip and detailed view.
+- Compact progress bars in the status bar tooltip and detailed view.
+- Reset countdowns shown together with the absolute reset date and time.
+- Live usage data from the local Codex app-server, with session files as a visible fallback.
 - Automatic refresh while the editor window is focused.
-- Local Codex session discovery under `~/.codex/sessions`.
 - Manual refresh and detailed usage panel.
 
 ## Status bar
@@ -26,6 +27,12 @@ A Visual Studio Code, Cursor, and Windsurf extension that shows how much Codex u
 
 When a previous window has already reset and no new consumption has been recorded, the extension displays `100%` remaining.
 
+The tooltip and details view show both the reset countdown and local reset date, for example:
+
+```text
+Resets in 4h 58m · Wed, Jul 10, 11:30 AM
+```
+
 ## Commands
 
 - `codex-usage-remaining.refresh` — refresh usage information.
@@ -37,7 +44,8 @@ When a previous window has already reset and no new consumption has been recorde
 All settings use the `codexUsageRemaining` namespace:
 
 - `codexUsageRemaining.showOutputOnError` — show the Output panel when an error occurs.
-- `codexUsageRemaining.sessionPath` — custom Codex sessions directory. The default is `~/.codex/sessions`.
+- `codexUsageRemaining.codexExecutablePath` — Codex CLI executable or absolute path used to query live usage.
+- `codexUsageRemaining.sessionPath` — custom Codex sessions directory used for token summaries and fallback data. The default is `~/.codex/sessions`.
 - `codexUsageRemaining.refreshInterval` — refresh interval in seconds. Valid range: 5 to 3600.
 - `codexUsageRemaining.warningRemainingThreshold` — show a warning at or below this remaining percentage. Default: 30.
 - `codexUsageRemaining.criticalRemainingThreshold` — show a critical state at or below this remaining percentage. Default: 10.
@@ -46,12 +54,13 @@ All settings use the `codexUsageRemaining` namespace:
 
 ```text
 src/
-├── config.ts        # Settings and threshold evaluation
-├── constants.ts     # Extension identifiers and defaults
-├── extension.ts     # Activation, commands, and refresh lifecycle
-├── presentation.ts  # Status bar, tooltip, and detailed panel rendering
-├── types.ts         # Shared data contracts
-└── usage.ts         # Codex session discovery and usage parsing
+├── codexAppServer.ts  # Local Codex app-server JSON-RPC client
+├── config.ts          # Settings and threshold evaluation
+├── constants.ts       # Extension identifiers and defaults
+├── extension.ts       # Activation, commands, and refresh lifecycle
+├── presentation.ts    # Status bar, tooltip, and detailed panel rendering
+├── types.ts           # Shared data contracts
+└── usage.ts           # Live usage loading, session fallback, and token parsing
 ```
 
 ## Local development
@@ -61,6 +70,7 @@ src/
 - Node.js 20 or newer.
 - npm.
 - VS Code, Cursor, or Windsurf.
+- Codex CLI available in `PATH`, or configured through `codexUsageRemaining.codexExecutablePath`.
 
 ### Install dependencies
 
@@ -145,13 +155,13 @@ When the release tag is empty, the workflow uses the version from `package.json`
 
 ## How usage is calculated
 
-Codex session files provide consumed percentages. The extension converts them to remaining percentages:
+The extension first requests the current usage windows from the local Codex app-server. The app-server provides consumed percentages, which are converted to remaining percentages:
 
 ```text
 remaining_percent = 100 - used_percent
 ```
 
-Session files are read from the most recent seven calendar days, ordered by modification time, and the newest valid `token_count` event is used.
+Session files under `~/.codex/sessions` are used for token summaries and as a fallback when live usage is unavailable. When fallback data is active, the extension displays that source explicitly.
 
 ## License
 

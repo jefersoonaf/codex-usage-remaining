@@ -7,7 +7,6 @@ export interface TokenUsagePayload {
 
 export interface UsageLimitPayload {
   used_percent?: number;
-  window_minutes?: number;
   resets_in_seconds?: number;
   resets_at?: number;
 }
@@ -30,7 +29,6 @@ export interface TokenCountRecord {
 
 export interface AppServerRateLimitWindow {
   usedPercent: number;
-  windowDurationMins?: number | null;
   resetsAt?: number | null;
 }
 
@@ -55,7 +53,6 @@ export interface TokenUsage {
 
 export interface UsageWindow {
   remainingPercent: number;
-  elapsedPercent?: number;
   resetTime?: Date;
   isExpired: boolean;
 }

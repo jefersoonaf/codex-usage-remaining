@@ -21,44 +21,63 @@ interface PendingRequest {
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const GRACEFUL_SHUTDOWN_MS = 300;
+const FORCED_SHUTDOWN_MS = 1_000;
 const MAX_STDERR_LINES = 20;
+
+let activeClient: CodexAppServerClient | undefined;
 
 class CodexAppServerClient {
   private process?: ChildProcessWithoutNullStreams;
   private reader?: readline.Interface;
-  private executable?: string;
-  private initialization?: Promise<void>;
   private requestSequence = 0;
+  private stopping = false;
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly stderrLines: string[] = [];
 
-  public async getRateLimits(executablePath: string): Promise<AppServerRateLimitsResponse> {
-    await this.ensureStarted(executablePath);
-    await this.initialization;
+  public async getRateLimits(
+    executablePath: string,
+    signal?: AbortSignal
+  ): Promise<AppServerRateLimitsResponse> {
+    const abortReason = createAbortError();
+    const onAbort = (): void => {
+      void this.cancel();
+    };
 
-    return this.request<AppServerRateLimitsResponse>('account/rateLimits/read');
-  }
-
-  public dispose(): void {
-    this.stop(new Error('Codex app-server client disposed.'));
-  }
-
-  private async ensureStarted(executablePath: string): Promise<void> {
-    const executable = executablePath.trim() || 'codex';
-
-    if (this.process && this.executable === executable && !this.process.killed) {
-      return;
+    if (signal?.aborted) {
+      throw abortReason;
     }
 
-    this.stop(new Error('Restarting Codex app-server client.'));
-    this.executable = executable;
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      await this.start(executablePath);
+      throwIfAborted(signal);
+      await this.initialize();
+      throwIfAborted(signal);
+      return await this.request<AppServerRateLimitsResponse>('account/rateLimits/read');
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      await this.stop(new Error('Codex usage query completed.'));
+    }
+  }
+
+  public cancel(): Promise<void> {
+    return this.stop(createAbortError());
+  }
+
+  private async start(executablePath: string): Promise<void> {
+    const executable = executablePath.trim() || 'codex';
     this.stderrLines.length = 0;
+    this.stopping = false;
 
     const child = spawn(executable, ['app-server', '--listen', 'stdio://'], {
       env: {
         ...process.env,
         RUST_LOG: process.env.RUST_LOG ?? 'error'
       },
+      // Windows npm/CLI shims can require a shell. The entire process tree is
+      // explicitly terminated after every query so no Codex child is left alive.
       shell: process.platform === 'win32',
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
@@ -70,18 +89,12 @@ class CodexAppServerClient {
     child.stderr.on('data', (chunk: Buffer | string) => this.captureStderr(String(chunk)));
     child.once('error', (error) => this.handleProcessFailure(error));
     child.once('exit', (code, signal) => {
-      if (this.process !== child) {
+      if (this.process !== child || this.stopping) {
         return;
       }
 
       const details = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`;
       this.handleProcessFailure(new Error(`Codex app-server stopped with ${details}.`));
-    });
-
-    this.initialization = this.initialize().catch((error: unknown) => {
-      const normalized = error instanceof Error ? error : new Error(String(error));
-      this.stop(normalized);
-      throw normalized;
     });
   }
 
@@ -106,7 +119,7 @@ class CodexAppServerClient {
 
   private requestRaw(method: string, params?: Record<string, unknown>): Promise<unknown> {
     const child = this.process;
-    if (!child || child.killed || child.stdin.destroyed) {
+    if (!child || child.stdin.destroyed) {
       return Promise.reject(new Error('Codex app-server is not running.'));
     }
 
@@ -136,7 +149,7 @@ class CodexAppServerClient {
 
   private writeMessage(message: Record<string, unknown>): void {
     const child = this.process;
-    if (!child || child.killed || child.stdin.destroyed) {
+    if (!child || child.stdin.destroyed) {
       throw new Error('Codex app-server is not available.');
     }
 
@@ -192,37 +205,140 @@ class CodexAppServerClient {
   }
 
   private handleProcessFailure(error: Error): void {
+    if (this.stopping) {
+      return;
+    }
+
     const stderr = this.stderrLines.length > 0 ? ` Last stderr: ${this.stderrLines.at(-1)}` : '';
-    this.stop(new Error(`${error.message}${stderr}`));
+    this.rejectPending(new Error(`${error.message}${stderr}`));
   }
 
-  private stop(reason: Error): void {
+  private async stop(reason: Error): Promise<void> {
+    if (this.stopping) {
+      return;
+    }
+
+    this.stopping = true;
     const child = this.process;
     this.process = undefined;
-    this.initialization = undefined;
-    this.executable = undefined;
 
     this.reader?.close();
     this.reader = undefined;
+    this.rejectPending(reason);
 
+    if (!child || hasExited(child)) {
+      return;
+    }
+
+    // Closing stdin first gives app-server a chance to stop cleanly and release
+    // any Codex state before a forced process-tree termination is attempted.
+    if (!child.stdin.destroyed) {
+      child.stdin.end();
+    }
+
+    if (await waitForExit(child, GRACEFUL_SHUTDOWN_MS)) {
+      return;
+    }
+
+    await terminateProcessTree(child);
+    await waitForExit(child, FORCED_SHUTDOWN_MS);
+  }
+
+  private rejectPending(reason: Error): void {
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
       pending.reject(reason);
     }
     this.pendingRequests.clear();
+  }
+}
 
-    if (child && !child.killed) {
-      child.kill();
+export async function fetchLiveRateLimits(
+  executablePath: string,
+  signal?: AbortSignal
+): Promise<AppServerRateLimitsResponse> {
+  // A fresh app-server is intentionally used for every sample. This ensures a
+  // ChatGPT/Codex account switch is picked up without restarting the editor and
+  // avoids keeping a background Codex process alive between refreshes.
+  const client = new CodexAppServerClient();
+  activeClient = client;
+
+  try {
+    return await client.getRateLimits(executablePath, signal);
+  } finally {
+    if (activeClient === client) {
+      activeClient = undefined;
     }
   }
 }
 
-const client = new CodexAppServerClient();
-
-export function fetchLiveRateLimits(executablePath: string): Promise<AppServerRateLimitsResponse> {
-  return client.getRateLimits(executablePath);
+export function cancelActiveCodexUsageQuery(): void {
+  void activeClient?.cancel();
 }
 
-export function disposeCodexAppServerClient(): void {
-  client.dispose();
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+}
+
+function createAbortError(): Error {
+  const error = new Error('Codex usage query cancelled.');
+  error.name = 'AbortError';
+  return error;
+}
+
+function hasExited(child: ChildProcessWithoutNullStreams): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+  if (hasExited(child)) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (exited: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener('exit', onExit);
+      resolve(exited);
+    };
+    const onExit = (): void => finish(true);
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+    child.once('exit', onExit);
+  });
+}
+
+async function terminateProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (hasExited(child)) {
+    return;
+  }
+
+  if (process.platform !== 'win32' || child.pid === undefined) {
+    child.kill('SIGTERM');
+    return;
+  }
+
+  // shell:true can introduce a cmd.exe parent on Windows. taskkill /T ensures
+  // both that shell and the actual Codex descendant are released.
+  await new Promise<void>((resolve) => {
+    const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      windowsHide: true,
+      shell: false,
+      stdio: 'ignore'
+    });
+
+    killer.once('error', () => {
+      if (!hasExited(child)) {
+        child.kill();
+      }
+      resolve();
+    });
+    killer.once('exit', () => resolve());
+  });
 }

@@ -63,7 +63,7 @@
         "codexUsageRemaining.codexExecutablePath": {
           "type": "string",
           "default": "codex",
-          "description": "Codex CLI executable or absolute path used to query live usage through Codex app-server.",
+          "description": "Codex CLI executable or absolute path used for short-lived live usage queries.",
           "scope": "window"
         },
         "codexUsageRemaining.sessionPath": {
@@ -74,10 +74,10 @@
         },
         "codexUsageRemaining.refreshInterval": {
           "type": "number",
-          "default": 10,
-          "minimum": 5,
+          "default": 30,
+          "minimum": 15,
           "maximum": 3600,
-          "description": "Refresh interval in seconds.",
+          "description": "Refresh interval in seconds. Live Codex queries run only while the editor is focused.",
           "scope": "window"
         },
         "codexUsageRemaining.warningRemainingThreshold": {

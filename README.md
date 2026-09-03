@@ -8,8 +8,9 @@ A Visual Studio Code, Cursor, and Windsurf extension that shows how much Codex u
 - Green, yellow, and red status indicators based on configurable remaining thresholds.
 - Compact progress bars in the status bar tooltip and detailed view.
 - Reset countdowns shown together with the absolute reset date and time.
-- Live usage data from the local Codex app-server, with session files as a visible fallback.
-- Automatic refresh while the editor window is focused.
+- Live usage data from a short-lived local Codex app-server query, with session files as a visible fallback.
+- Automatic refresh only while the editor window is focused.
+- Automatic account refresh when returning to the editor after changing the ChatGPT/Codex login.
 - Manual refresh and detailed usage panel.
 
 ## Status bar
@@ -33,6 +34,24 @@ The tooltip and details view show both the reset countdown and local reset date,
 Resets in 4h 58m · Wed, Jul 10, 11:30 AM
 ```
 
+## Account switching and Codex process isolation
+
+The extension does **not** keep a Codex app-server process running for the lifetime of the editor.
+
+For each live refresh it:
+
+1. Starts a fresh local `codex app-server` process.
+2. Initializes the local JSON-RPC connection.
+3. Reads the current account usage.
+4. Closes stdin and terminates the app-server immediately after the response.
+5. On Windows, terminates the complete spawned process tree if graceful shutdown does not finish quickly.
+
+Using a fresh process for every sample means the extension reloads the currently authenticated ChatGPT/Codex account instead of retaining authentication state from the account that was active when the editor originally started.
+
+When VS Code, Cursor, or Windsurf loses focus, periodic polling stops and any live Codex query still in progress is cancelled. This is intentional so the extension does not leave an app-server active while the ChatGPT desktop application is being used for login changes, device pairing, or Remote access. When the editor receives focus again, it immediately requests a fresh usage snapshot.
+
+The session-file fallback only opens files for the duration of a read and closes every file handle immediately afterwards. The extension does not keep session or authentication files open and does not watch or modify Codex authentication files.
+
 ## Commands
 
 - `codex-usage-remaining.refresh` — refresh usage information.
@@ -44,9 +63,9 @@ Resets in 4h 58m · Wed, Jul 10, 11:30 AM
 All settings use the `codexUsageRemaining` namespace:
 
 - `codexUsageRemaining.showOutputOnError` — show the Output panel when an error occurs.
-- `codexUsageRemaining.codexExecutablePath` — Codex CLI executable or absolute path used to query live usage.
+- `codexUsageRemaining.codexExecutablePath` — Codex CLI executable or absolute path used for short-lived live usage queries.
 - `codexUsageRemaining.sessionPath` — custom Codex sessions directory used for token summaries and fallback data. The default is `~/.codex/sessions`.
-- `codexUsageRemaining.refreshInterval` — refresh interval in seconds. Valid range: 5 to 3600.
+- `codexUsageRemaining.refreshInterval` — refresh interval in seconds. Valid range: 15 to 3600. Default: 30.
 - `codexUsageRemaining.warningRemainingThreshold` — show a warning at or below this remaining percentage. Default: 30.
 - `codexUsageRemaining.criticalRemainingThreshold` — show a critical state at or below this remaining percentage. Default: 10.
 
@@ -54,10 +73,10 @@ All settings use the `codexUsageRemaining` namespace:
 
 ```text
 src/
-├── codexAppServer.ts  # Local Codex app-server JSON-RPC client
+├── codexAppServer.ts  # Short-lived local Codex app-server JSON-RPC client
 ├── config.ts          # Settings and threshold evaluation
 ├── constants.ts       # Extension identifiers and defaults
-├── extension.ts       # Activation, commands, and refresh lifecycle
+├── extension.ts       # Activation, commands, focus handling, and refresh lifecycle
 ├── presentation.ts    # Status bar, tooltip, and detailed panel rendering
 ├── types.ts           # Shared data contracts
 └── usage.ts           # Live usage loading, session fallback, and token parsing
@@ -155,13 +174,13 @@ When the release tag is empty, the workflow uses the version from `package.json`
 
 ## How usage is calculated
 
-The extension first requests the current usage windows from the local Codex app-server. The app-server provides consumed percentages, which are converted to remaining percentages:
+The extension starts a short-lived local Codex app-server and requests the current usage windows for the account that is authenticated at that moment. The app-server provides consumed percentages, which are converted to remaining percentages:
 
 ```text
 remaining_percent = 100 - used_percent
 ```
 
-Session files under `~/.codex/sessions` are used for token summaries and as a fallback when live usage is unavailable. When fallback data is active, the extension displays that source explicitly.
+The app-server is stopped before the refresh completes. Session files under `~/.codex/sessions` are used for token summaries and as a fallback when live usage is unavailable. When fallback data is active, the extension displays that source explicitly.
 
 ## License
 

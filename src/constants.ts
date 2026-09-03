@@ -10,8 +10,8 @@ export const COMMANDS = {
 
 export const DEFAULTS = {
   codexExecutablePath: 'codex',
-  refreshIntervalSeconds: 10,
-  minimumRefreshIntervalSeconds: 5,
+  refreshIntervalSeconds: 30,
+  minimumRefreshIntervalSeconds: 15,
   maximumRefreshIntervalSeconds: 3600,
   warningRemainingThreshold: 30,
   criticalRemainingThreshold: 10,

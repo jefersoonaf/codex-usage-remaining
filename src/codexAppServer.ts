@@ -25,6 +25,8 @@ const GRACEFUL_SHUTDOWN_MS = 300;
 const FORCED_SHUTDOWN_MS = 1_000;
 const MAX_STDERR_LINES = 20;
 
+let activeClient: CodexAppServerClient | undefined;
+
 class CodexAppServerClient {
   private process?: ChildProcessWithoutNullStreams;
   private reader?: readline.Interface;
@@ -39,7 +41,7 @@ class CodexAppServerClient {
   ): Promise<AppServerRateLimitsResponse> {
     const abortReason = createAbortError();
     const onAbort = (): void => {
-      void this.stop(abortReason);
+      void this.cancel();
     };
 
     if (signal?.aborted) {
@@ -58,6 +60,10 @@ class CodexAppServerClient {
       signal?.removeEventListener('abort', onAbort);
       await this.stop(new Error('Codex usage query completed.'));
     }
+  }
+
+  public cancel(): Promise<void> {
+    return this.stop(createAbortError());
   }
 
   private async start(executablePath: string): Promise<void> {
@@ -255,7 +261,19 @@ export async function fetchLiveRateLimits(
   // ChatGPT/Codex account switch is picked up without restarting the editor and
   // avoids keeping a background Codex process alive between refreshes.
   const client = new CodexAppServerClient();
-  return client.getRateLimits(executablePath, signal);
+  activeClient = client;
+
+  try {
+    return await client.getRateLimits(executablePath, signal);
+  } finally {
+    if (activeClient === client) {
+      activeClient = undefined;
+    }
+  }
+}
+
+export function cancelActiveCodexUsageQuery(): void {
+  void activeClient?.cancel();
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

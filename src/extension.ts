@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { disposeCodexAppServerClient } from './codexAppServer';
+import { cancelActiveCodexUsageQuery } from './codexAppServer';
 import { getExtensionSettings } from './config';
 import { COMMANDS, CONFIG_SECTION, EXTENSION_ID, EXTENSION_NAME } from './constants';
 import { DetailsPanel, StatusBarView } from './presentation';
@@ -8,6 +8,7 @@ import { loadUsageSnapshot } from './usage';
 
 let refreshTimer: NodeJS.Timeout | undefined;
 let refreshInFlight: Promise<void> | undefined;
+let refreshQueued = false;
 let windowFocused = true;
 let statusBarView: StatusBarView | undefined;
 let detailsPanel: DetailsPanel | undefined;
@@ -33,10 +34,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.window.onDidChangeWindowState(({ focused }) => {
       windowFocused = focused;
+
       if (focused) {
         startRefreshLoop();
       } else {
         stopRefreshLoop();
+        cancelActiveCodexUsageQuery();
       }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -51,16 +54,26 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   stopRefreshLoop();
-  disposeCodexAppServerClient();
+  cancelActiveCodexUsageQuery();
 }
 
 function refreshUsage(): Promise<void> {
   if (refreshInFlight) {
+    // If focus/account state changes while a sample is finishing, make sure a
+    // fresh sample runs immediately afterwards instead of reusing stale data.
+    refreshQueued = true;
     return refreshInFlight;
   }
 
   refreshInFlight = performRefresh().finally(() => {
     refreshInFlight = undefined;
+
+    if (refreshQueued && windowFocused) {
+      refreshQueued = false;
+      void refreshUsage();
+    } else {
+      refreshQueued = false;
+    }
   });
 
   return refreshInFlight;
@@ -71,6 +84,13 @@ async function performRefresh(): Promise<void> {
 
   try {
     const snapshot = await loadUsageSnapshot(settings.sessionPath, settings.codexExecutablePath);
+
+    // The user may have switched to ChatGPT while the query was in flight. Do
+    // not update the UI from a query that was cancelled on window blur.
+    if (!windowFocused) {
+      return;
+    }
+
     statusBarView?.update(snapshot, settings);
     detailsPanel?.update(snapshot, settings);
 
@@ -79,6 +99,10 @@ async function performRefresh(): Promise<void> {
     }
     lastSourceWarning = snapshot.sourceWarning;
   } catch (error) {
+    if (isCancellationError(error)) {
+      return;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     logError(message, settings);
     statusBarView?.showError(message);
@@ -103,6 +127,10 @@ function stopRefreshLoop(): void {
     clearInterval(refreshTimer);
     refreshTimer = undefined;
   }
+}
+
+function isCancellationError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function logWarning(message: string): void {
